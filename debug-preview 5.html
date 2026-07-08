@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Debug SDM</title>
+<style>
+body { font-family: monospace; background:#111; color:#eee; padding:20px; }
+button { background:#1db954; color:#000; border:none; padding:8px 16px; border-radius:6px; cursor:pointer; margin:4px; }
+.result { margin:10px 0; padding:10px; border-radius:6px; background:#1a1a1a; }
+.ok { border-left:3px solid #1db954; }
+.fail { border-left:3px solid #ff4444; }
+audio { display:block; margin-top:8px; width:100%; }
+pre { font-size:11px; color:#aaa; white-space:pre-wrap; word-break:break-all; }
+</style>
+</head>
+<body>
+<h2>Debug SDM - À la vie à la mort</h2>
+<button onclick="testDirectId()">1. Test ID Apple Music direct</button>
+<button onclick="testUPC()">2. Test via Spotify UPC</button>
+<button onclick="testSearch()">3. Test recherche nom iTunes</button>
+<div id="results" style="margin-top:16px;"></div>
+<script>
+const CLIENT_ID='3f3173e083604096abe93d93e05a8867', CLIENT_SECRET='76dff06debf5467aa7fe2dc911779134';
+let tok='';
+async function getToken(){if(tok)return tok;const r=await fetch('https://accounts.spotify.com/api/token',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','Authorization':'Basic '+btoa(CLIENT_ID+':'+CLIENT_SECRET)},body:'grant_type=client_credentials'});tok=(await r.json()).access_token;return tok;}
+function log(id,type,msg){let el=document.getElementById('r-'+id);if(!el){el=document.createElement('div');el.id='r-'+id;document.getElementById('results').appendChild(el);}el.className='result '+type;el.innerHTML='<strong>'+id+'</strong><br>'+msg;}
+
+async function testDirectId(){
+  for(const c of ['fr','us','gb']){
+    try{
+      const r=await fetch('https://itunes.apple.com/lookup?id=1757802855&entity=song&country='+c);
+      const d=await r.json();
+      const songs=d.results?.filter(t=>t.kind==='song')||[];
+      const wp=songs.filter(t=>t.previewUrl);
+      if(wp.length){
+        log('ID direct ('+c+')','ok','✅ '+songs.length+' sons, '+wp.length+' previews<br>'+wp.slice(0,3).map(s=>s.trackName+'<audio controls src="'+s.previewUrl+'"></audio>').join(''));
+      } else {
+        log('ID direct ('+c+')','fail','❌ '+songs.length+' sons, 0 preview');
+      }
+    }catch(e){log('ID direct ('+c+')','fail','❌ '+e.message);}
+  }
+}
+
+async function testUPC(){
+  try{
+    const t=await getToken();
+    const r=await fetch('https://api.spotify.com/v1/search?q=SDM+a+la+vie+a+la+mort&type=album&limit=5',{headers:{Authorization:'Bearer '+t}});
+    const d=await r.json();
+    const albums=d.albums?.items||[];
+    log('Spotify','ok',albums.map(a=>a.name+' ('+a.id+')').join('<br>')||'Aucun');
+    for(const alb of albums.slice(0,3)){
+      const r2=await fetch('https://api.spotify.com/v1/albums/'+alb.id,{headers:{Authorization:'Bearer '+t}});
+      const full=await r2.json();
+      const upc=full.external_ids?.upc;
+      log('UPC '+alb.name,'ok','UPC: <b>'+upc+'</b>');
+      if(upc){
+        for(const c of ['fr','us']){
+          const r3=await fetch('https://itunes.apple.com/lookup?upc='+upc+'&entity=song&country='+c);
+          const d3=await r3.json();
+          const songs=d3.results?.filter(t=>t.kind==='song'&&t.previewUrl)||[];
+          log('UPC iTunes ('+c+') '+alb.name,songs.length?'ok':'fail',songs.length?'✅ '+songs.length+' previews<br>'+songs.slice(0,2).map(s=>s.trackName+'<audio controls src="'+s.previewUrl+'"></audio>').join(''):'❌ 0 previews');
+        }
+      }
+    }
+  }catch(e){log('UPC','fail','❌ '+e.message);}
+}
+
+async function testSearch(){
+  for(const q of ['SDM a la vie a la mort','SDM vie mort','a la vie a la mort']){
+    for(const c of ['fr','us']){
+      try{
+        const r=await fetch('https://itunes.apple.com/search?term='+encodeURIComponent(q)+'&entity=album&limit=5&country='+c);
+        const d=await r.json();
+        const albs=d.results?.filter(a=>a.wrapperType==='collection')||[];
+        log('Search "'+q+'" ('+c+')',albs.length?'ok':'fail',albs.length?albs.map(a=>a.collectionName+' - '+a.artistName+' ['+a.collectionId+']').join('<br>'):'❌ Aucun');
+      }catch(e){log('Search "'+q+'" ('+c+')','fail',e.message);}
+    }
+  }
+}
+</script>
+</body>
+</html>
