@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Debug Artist Albums</title>
+<style>
+body { font-family: monospace; background:#111; color:#eee; padding:20px; }
+input { background:#222; border:1px solid #444; color:#eee; padding:8px; width:200px; border-radius:6px; }
+button { background:#1db954; color:#000; border:none; padding:8px 16px; border-radius:6px; cursor:pointer; margin:4px; }
+.result { margin:8px 0; padding:10px; border-radius:6px; background:#1a1a1a; font-size:13px; }
+.ok { border-left:3px solid #1db954; }
+.fail { border-left:3px solid #ff4444; }
+.info { border-left:3px solid #888; }
+audio { display:block; margin-top:6px; width:100%; }
+</style>
+</head>
+<body>
+<h2>Debug Artist → Album → Previews</h2>
+<div style="margin-bottom:12px;">
+  <input id="artist" placeholder="Artiste" value="SCH" />
+  <input id="album" placeholder="Album" value="JVLIVS III" style="margin-left:6px;" />
+  <button onclick="testAll()">Tester</button>
+</div>
+<div id="results"></div>
+<script>
+function normalize(str) {
+  return str.toLowerCase().trim()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+function log(id, type, msg) {
+  let el = document.getElementById('r-'+id);
+  if (!el) { el = document.createElement('div'); el.id='r-'+id; document.getElementById('results').appendChild(el); }
+  el.className = 'result ' + type;
+  el.innerHTML = '<strong>'+id+'</strong><br>'+msg;
+}
+
+async function testAll() {
+  document.getElementById('results').innerHTML = '';
+  const artistInput = document.getElementById('artist').value.trim();
+  const albumInput  = document.getElementById('album').value.trim();
+  const artistNorm  = normalize(artistInput);
+  const albumNorm   = normalize(albumInput);
+
+  log('params','info',`Artist norm: "${artistNorm}" | Album norm: "${albumNorm}"`);
+
+  for (const country of ['fr','gb','us']) {
+    // Step 1: find artistId
+    try {
+      const r = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(artistNorm)}&entity=musicArtist&limit=5&country=${country}`);
+      const d = await r.json();
+      const artists = d.results?.filter(a => a.wrapperType==='artist') || [];
+      log(`Artists (${country})`, artists.length?'ok':'fail',
+        artists.length ? artists.map(a=>`${a.artistName} [${a.artistId}]`).join('<br>') : '❌ Aucun artiste');
+
+      if (!artists.length) continue;
+
+      const artistMatch = artists.find(a => normalize(a.artistName||'') === artistNorm) || artists[0];
+      log(`Best artist (${country})`, 'info', `→ ${artistMatch.artistName} [${artistMatch.artistId}]`);
+
+      // Step 2: get all albums
+      const r2 = await fetch(`https://itunes.apple.com/lookup?id=${artistMatch.artistId}&entity=album&limit=50&country=${country}`);
+      const d2 = await r2.json();
+      const albums = d2.results?.filter(a => a.wrapperType==='collection') || [];
+      log(`Albums (${country})`, albums.length?'ok':'fail',
+        albums.length ? albums.map(a=>`"${a.collectionName}" [${a.collectionId}] norm:"${normalize(a.collectionName||'')}"`).join('<br>') : '❌ Aucun album');
+
+      // Step 3: find matching album
+      const match = albums.find(a => {
+        const n = normalize(a.collectionName||'');
+        return n===albumNorm || n.includes(albumNorm) || albumNorm.includes(n);
+      });
+      if (match) {
+        log(`Match (${country})`, 'ok', `✅ "${match.collectionName}" [${match.collectionId}]`);
+
+        // Step 4: get songs
+        const r3 = await fetch(`https://itunes.apple.com/lookup?id=${match.collectionId}&entity=song&country=${country}`);
+        const d3 = await r3.json();
+        const songs = d3.results?.filter(t => t.kind==='song') || [];
+        const withP = songs.filter(t => t.previewUrl);
+        log(`Songs (${country})`, withP.length?'ok':'fail',
+          `${songs.length} sons, ${withP.length} previews`+
+          (withP.length ? '<br>'+withP.slice(0,3).map(s=>s.trackName+'<audio controls src="'+s.previewUrl+'"></audio>').join('') : ''));
+      } else {
+        log(`Match (${country})`, 'fail', `❌ Album non trouvé parmi ${albums.length} albums`);
+      }
+    } catch(e) { log(`Error (${country})`, 'fail', e.message); }
+  }
+}
+</script>
+</body>
+</html>
